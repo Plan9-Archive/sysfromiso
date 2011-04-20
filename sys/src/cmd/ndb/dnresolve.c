@@ -17,12 +17,23 @@ enum
 	Udp, Tcp,
 
 	Maxdest=	24,	/* maximum destinations for a request message */
-	Maxtrans=	3,	/* maximum transmissions to a server */
-	Maxretries=	3, /* cname+actual resends: was 32; have pity on user */
-	Maxwaitms=	1000,	/* wait no longer for a remote dns query */
-	Minwaitms=	100,	/* willing to wait for a remote dns query */
-	Remntretry=	15,	/* min. sec.s between /net.alt remount tries */
 	Maxoutstanding=	15,	/* max. outstanding queries per domain name */
+	Remntretry=	15,	/* min. sec.s between /net.alt remount tries */
+
+	/*
+	 * these are the old values; we're trying longer timeouts now
+	 * primarily for the benefit of remote nameservers querying us
+	 * during times of bad connectivity.
+	 */
+//	Maxtrans=	3,	/* maximum transmissions to a server */
+//	Maxretries=	3, /* cname+actual resends: was 32; have pity on user */
+//	Maxwaitms=	1000,	/* wait no longer for a remote dns query */
+//	Minwaitms=	100,	/* willing to wait for a remote dns query */
+
+	Maxtrans=	5,	/* maximum transmissions to a server */
+	Maxretries=	5, /* cname+actual resends: was 32; have pity on user */
+	Maxwaitms=	5000,	/* wait no longer for a remote dns query */
+	Minwaitms=	500,	/* willing to wait for a remote dns query */
 
 	Destmagic=	0xcafebabe,
 	Querymagic=	0xdeadbeef,
@@ -58,8 +69,8 @@ struct Query {
 
 	/* dest must not be on the stack due to forking in slave() */
 	Dest	*dest;		/* array of destinations */
-	Dest	*curdest;	/* pointer to one of them */
-	int	ndest;
+	Dest	*curdest;	/* pointer to next to fill */
+	int	ndest;		/* transmit to this many on this round */
 
 	int	udpfd;
 
@@ -114,6 +125,18 @@ procgetname(void)
 		return strdup("");
 	*rp = '\0';
 	return strdup(lp+1);
+}
+
+void
+rrfreelistptr(RR **rpp)
+{
+	RR *rp;
+
+	if (rpp == nil || *rpp == nil)
+		return;
+	rp = *rpp;
+	*rpp = nil;		/* update pointer in memory before freeing */
+	rrfreelist(rp);
 }
 
 /*
@@ -262,12 +285,6 @@ destck(Dest *p)
 {
 	assert(p);
 	assert(p->magic == Destmagic);
-}
-
-static void
-destdestroy(Dest *p)
-{
-	USED(p);
 }
 
 /*
@@ -569,6 +586,8 @@ initdnsmsg(DNSmsg *mp, RR *rp, int flags, ushort reqno)
 	mp->flags = flags;
 	mp->id = reqno;
 	mp->qd = rp;
+	if(rp != nil)
+		mp->qdcount = 1;
 }
 
 DNSmsg *
@@ -608,11 +627,10 @@ mkreq(DN *dp, int type, uchar *buf, int flags, ushort reqno)
 void
 freeanswers(DNSmsg *mp)
 {
-	rrfreelist(mp->qd);
-	rrfreelist(mp->an);
-	rrfreelist(mp->ns);
-	rrfreelist(mp->ar);
-	mp->qd = mp->an = mp->ns = mp->ar = nil;
+	rrfreelistptr(&mp->qd);
+	rrfreelistptr(&mp->an);
+	rrfreelistptr(&mp->ns);
+	rrfreelistptr(&mp->ar);
 }
 
 /* timed read of reply.  sets srcip */
@@ -656,7 +674,7 @@ readnet(Query *qp, int medium, uchar *ibuf, uvlong endms, uchar **replyp,
 			dnslog("readnet: %s: tcp fd unset for dest %I",
 				qp->dp->name, qp->tcpip);
 		else if (readn(fd, lenbuf, 2) != 2) {
-			dnslog("readnet: short read of tcp size from %I",
+			dnslog("readnet: short read of 2-byte tcp msg size from %I",
 				qp->tcpip);
 			/* probably a time-out */
 			notestats(startns, 1, qp->type);
@@ -792,7 +810,7 @@ ipisbm(uchar *ip)
 }
 
 /*
- *  Get next server address
+ *  Get next server address(es) into qp->dest[nd] and beyond
  */
 static int
 serveraddrs(Query *qp, int nd, int depth)
@@ -893,10 +911,8 @@ cacheneg(DN *dp, int type, int rcode, RR *soarr)
 
 	/* no cache time specified, don't make anything up */
 	if(soarr != nil){
-		if(soarr->next != nil){
-			rrfreelist(soarr->next);
-			soarr->next = nil;
-		}
+		if(soarr->next != nil)
+			rrfreelistptr(&soarr->next);
 		soaowner = soarr->owner;
 	} else
 		soaowner = nil;
@@ -945,7 +961,7 @@ mydnsquery(Query *qp, int medium, uchar *udppkt, int len)
 {
 	int rv = -1, nfd;
 	char *domain;
-	char conndir[40];
+	char conndir[40], net[40];
 	uchar belen[2];
 	NetConnInfo *nci;
 
@@ -984,8 +1000,10 @@ mydnsquery(Query *qp, int medium, uchar *udppkt, int len)
 		break;
 	case Tcp:
 		/* send via TCP & keep fd around for reply */
+		snprint(net, sizeof net, "%s/tcp",
+			(mntpt[0] != '\0'? mntpt: "/net"));
 		alarm(10*1000);
-		qp->tcpfd = rv = dial(netmkaddr(domain, "tcp", "dns"), nil,
+		qp->tcpfd = rv = dial(netmkaddr(domain, net, "dns"), nil,
 			conndir, &qp->tcpctlfd);
 		alarm(0);
 		if (qp->tcpfd < 0) {
@@ -1085,6 +1103,9 @@ xmitquery(Query *qp, int medium, int depth, uchar *obuf, int inns, int len)
 			if((1<<p->nx) > qp->ndest)
 				continue;
 
+			if(memcmp(p->a, IPnoaddr, sizeof IPnoaddr) == 0)
+				continue;		/* mistake */
+
 			procsetname("udp %sside query to %I/%s %s %s",
 				(inns? "in": "out"), p->a, p->s->name,
 				qp->dp->name, rrname(qp->type, buf, sizeof buf));
@@ -1167,8 +1188,7 @@ procansw(Query *qp, DNSmsg *mp, uchar *srcip, int depth, Dest *p)
 				p->code = Rserver;
 			return -1;
 		}
-		rrfreelist(mp->ns);
-		mp->ns = nil;
+		rrfreelistptr(&mp->ns);
 	}
 
 	/* remove any soa's from the authority section */
@@ -1180,6 +1200,7 @@ procansw(Query *qp, DNSmsg *mp, uchar *srcip, int depth, Dest *p)
 	unique(mp->ns);
 	unique(mp->ar);
 	unlock(&dnlock);
+
 	if(mp->an)
 		rrattach(mp->an, (mp->flags & Fauth) != 0);
 	if(mp->ar)
@@ -1189,15 +1210,12 @@ procansw(Query *qp, DNSmsg *mp, uchar *srcip, int depth, Dest *p)
 		rrattach(mp->ns, Notauthoritative);
 	} else {
 		ndp = nil;
-		rrfreelist(mp->ns);
-		mp->ns = nil;
+		rrfreelistptr(&mp->ns);
 	}
 
 	/* free the question */
-	if(mp->qd) {
-		rrfreelist(mp->qd);
-		mp->qd = nil;
-	}
+	if(mp->qd)
+		rrfreelistptr(&mp->qd);
 
 	/*
 	 *  Any reply from an authoritative server,
@@ -1252,7 +1270,7 @@ procansw(Query *qp, DNSmsg *mp, uchar *srcip, int depth, Dest *p)
 	 *  netquery, which current holds qp->dp->querylck,
 	 *  so release it now and acquire it upon return.
 	 */
-//	lcktype = qtype2lck(qp->type);
+//	lcktype = qtype2lck(qp->type);		/* someday try this again */
 //	qunlock(&qp->dp->querylck[lcktype]);
 
 	nqp = emalloc(sizeof *nqp);
@@ -1303,7 +1321,8 @@ tcpquery(Query *qp, DNSmsg *mp, int depth, uchar *ibuf, uchar *obuf, int len,
 }
 
 /*
- *  query name servers.  If the name server returns a pointer to another
+ *  query name servers.  fill in obuf with on-the-wire representation of a
+ *  DNSmsg derived from qp.  if the name server returns a pointer to another
  *  name server, recurse.
  */
 static int
