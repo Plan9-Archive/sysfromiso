@@ -1669,7 +1669,7 @@ fileMetaUnlock(File *f)
 static void
 fileRAccess(File* f)
 {
-	if(f->mode == OReadOnly)
+	if(f->mode == OReadOnly || f->fs->noatimeupd)
 		return;
 
 	fileMetaLock(f);
@@ -1824,11 +1824,11 @@ fileName(File *f)
 	static char root[] = "/";
 
 	if (f == nil)
-		return strdup("/**GOK**");
+		return vtStrDup("/**GOK**");
 
 	p = fileGetParent(f);
 	if (p == f)
-		name = strdup(root);
+		name = vtStrDup(root);
 	else {
 		pname = fileName(p);
 		if (strcmp(pname, root) == 0)

@@ -215,6 +215,19 @@ inready(void)
 }
 
 /*
+ *  ask 8042 to enable the use of address bit 20
+ */
+void
+i8042a20(void)
+{
+	outready();
+	outb(Cmd, 0xD1);
+	outready();
+	outb(Data, 0xDF);
+	outready();
+}
+
+/*
  *  ask 8042 to reset the machine
  */
 void
@@ -346,11 +359,18 @@ setleds(Kbscan *kbscan)
 		leds |= 1<<1;
 	if(0 && kbscan->caps)		/* we don't implement caps lock */
 		leds |= 1<<2;
+
 	ilock(&i8042lock);
 	outready();
 	outb(Data, 0xed);		/* `reset keyboard lock states' */
+	if(inready() == 0)
+		inb(Data);
+
 	outready();
 	outb(Data, leds);
+	if(inready() == 0)
+		inb(Data);
+
 	outready();
 	iunlock(&i8042lock);
 }

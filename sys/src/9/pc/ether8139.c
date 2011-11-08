@@ -311,6 +311,8 @@ rtl8139ifstat(Ether* edev, void* a, long n, ulong offset)
 
 	ctlr = edev->ctlr;
 	p = malloc(READSTR);
+	if(p == nil)
+		error(Enomem);
 	l = snprint(p, READSTR, "rcr %#8.8ux\n", ctlr->rcr);
 	l += snprint(p+l, READSTR-l, "multicast %ud\n", ctlr->mcast);
 	l += snprint(p+l, READSTR-l, "ierrs %d\n", ctlr->ierrs);
@@ -377,6 +379,18 @@ rtl8139halt(Ctlr* ctlr)
 		freeb(ctlr->td[i].bp);
 		ctlr->td[i].bp = nil;
 	}
+}
+
+static void
+rtl8139shutdown(Ether *edev)
+{
+	Ctlr *ctlr;
+
+	ctlr = edev->ctlr;
+	ilock(&ctlr->ilock);
+	rtl8139halt(ctlr);
+	rtl8139reset(ctlr);
+	iunlock(&ctlr->ilock);
 }
 
 static void
@@ -454,6 +468,10 @@ rtl8139attach(Ether* edev)
 	if(ctlr->alloc == nil){
 		ctlr->rblen = 1<<((Rblen>>RblenSHIFT)+13);
 		ctlr->alloc = mallocz(ctlr->rblen+16 + Ntd*Tdbsz + 32, 0);
+		if(ctlr->alloc == nil) {
+			qunlock(&ctlr->alock);
+			error(Enomem);
+		}
 		rtl8139init(edev);
 	}
 	qunlock(&ctlr->alock);
@@ -752,6 +770,8 @@ rtl8139pnp(Ether* edev)
 			if(p->ccrb != 0x02 || p->ccru != 0)
 				continue;
 			ctlr = malloc(sizeof(Ctlr));
+			if(ctlr == nil)
+				error(Enomem);
 			ctlr->pcidev = p;
 			ctlr->id = (p->did<<16)|p->vid;
 
@@ -815,7 +835,7 @@ rtl8139pnp(Ether* edev)
 	edev->arg = edev;
 	edev->promiscuous = rtl8139promiscuous;
 	edev->multicast = rtl8139multicast;
-//	edev->shutdown = rtl8139shutdown;
+	edev->shutdown = rtl8139shutdown;
 
 	/*
 	 * This should be much more dynamic but will do for now.

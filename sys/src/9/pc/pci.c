@@ -8,13 +8,12 @@
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../port/error.h"
 
 #define DBG	if(0) pcilog
 
 struct
 {
-	char	output[16384];
+	char	output[PCICONSSIZE];
 	int	ptr;
 }PCICONS;
 
@@ -200,6 +199,8 @@ pcibusmap(Pcidev *root, ulong *pmema, ulong *pioa, int wrreg)
 
 	ntb *= (PciCIS-PciBAR0)/4;
 	table = malloc(2*ntb*sizeof(Pcisiz));
+	if(table == nil)
+		panic("pcibusmap: no memory");
 	itb = table;
 	mtb = table+ntb;
 
@@ -389,6 +390,8 @@ pcilscan(int bno, Pcidev** list)
 			if(l == 0xFFFFFFFF || l == 0)
 				continue;
 			p = malloc(sizeof(*p));
+			if(p == nil)
+				panic("pcilscan: no memory");
 			p->tbdf = tbdf;
 			p->vid = l;
 			p->did = l>>16;
@@ -653,6 +656,7 @@ static Bridge southbridges[] = {
 	{ 0x8086, 0x2641, pIIxget, pIIxset },	/* Intel 82801FBM */
 	{ 0x8086, 0x27b8, pIIxget, pIIxset },	/* Intel 82801GB */
 	{ 0x8086, 0x27b9, pIIxget, pIIxset },	/* Intel 82801GBM */
+	{ 0x8086, 0x27bd, pIIxget, pIIxset },	/* Intel 82801GB/GR */
 	{ 0x8086, 0x3a16, pIIxget, pIIxset },	/* Intel 82801JIR */
 	{ 0x8086, 0x3a40, pIIxget, pIIxset },	/* Intel 82801JI */
 	{ 0x8086, 0x3a42, pIIxget, pIIxset },	/* Intel 82801JI */

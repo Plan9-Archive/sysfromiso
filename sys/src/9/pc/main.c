@@ -8,6 +8,11 @@
 #include	"init.h"
 #include	"pool.h"
 #include	"reboot.h"
+#include	"mp.h"
+
+enum {
+	Less_power_slower = 1,
+};
 
 Mach *m;
 
@@ -651,9 +656,9 @@ shutdown(int ispanic)
 	/*
 	 * setting exiting will make hzclock() on each processor call exit(0),
 	 * which calls shutdown(0) and arch->reset(), which on mp systems is
-	 * mpshutdown, from which there is no return: the processor is idled
-	 * or initiates a reboot.  clearing our bit in machs avoids calling
-	 * exit(0) from hzclock() on this processor.
+	 * mpshutdown, which idles non-bootstrap cpus and returns on bootstrap
+	 * processors (to permit a reboot).  clearing our bit in machs avoids
+	 * calling exit(0) from hzclock() on this processor.
 	 */
 	active.machs &= ~(1<<m->machno);
 	active.exiting = 1;
@@ -701,15 +706,27 @@ reboot(void *entry, void *code, ulong size)
 		sched();
 	}
 
-	shutdown(0);
+	if(conf.nmach > 1) {
+		/*
+		 * the other cpus could be holding locks that will never get
+		 * released (e.g., in the print path) if we put them into
+		 * reset now, so force them to shutdown gracefully first.
+		 */
+		lock(&active);
+		active.rebooting = 1;
+		unlock(&active);
+		shutdown(0);
+		if(arch->resetothers)
+			arch->resetothers();
+		delay(20);
+	}
 
 	/*
 	 * should be the only processor running now
 	 */
+	active.machs = 0;
 	if (m->machno != 0)
 		print("on cpu%d (not 0)!\n", m->machno);
-	if (active.machs)
-		print("still have active ap processors!\n");
 
 	print("shutting down...\n");
 	delay(200);
@@ -837,6 +854,16 @@ cistrncmp(char *a, char *b, int n)
 void
 idlehands(void)
 {
-	if(conf.nmach == 1)
+	/*
+	 * we used to halt only on single-core setups. halting in an smp system 
+	 * can result in a startup latency for processes that become ready.
+	 * if less_power_slower is true, we care more about saving energy
+	 * than reducing this latency.
+	 *
+	 * the performance loss of less_power_slower seems to be minute
+	 * and it reduces lock contention (thus system time and real time)
+	 * on many-core systems with large values of NPROC.
+	 */
+	if(conf.nmach == 1 || Less_power_slower)
 		halt();
 }

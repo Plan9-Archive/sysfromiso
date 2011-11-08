@@ -27,6 +27,9 @@ typedef struct Vctl	Vctl;
 
 #define MAXSYSARG	5	/* for mount(fd, afd, mpt, flag, arg) */
 
+#define KMESGSIZE (256*1024)	/* lots, for acpi debugging */
+#define STAGESIZE 2048
+
 /*
  *  parameters for sysproc.c
  */
@@ -246,6 +249,7 @@ struct
 	int	exiting;		/* shutdown */
 	int	ispanic;		/* shutdown in response to a panic */
 	int	thunderbirdsarego;	/* lets the added processors continue to schedinit */
+	int	rebooting;		/* just idle cpus > 0 */
 }active;
 
 /*
@@ -269,6 +273,8 @@ struct PCArch
 	void	(*clockenable)(void);
 	uvlong	(*fastclock)(uvlong*);
 	void	(*timerset)(uvlong);
+
+	void	(*resetothers)(void);	/* put other cpus into reset */
 };
 
 /* cpuid instruction result register bits */

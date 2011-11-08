@@ -347,6 +347,8 @@ vt6102ifstat(Ether* edev, void* a, long n, ulong offset)
 	ctlr = edev->ctlr;
 
 	p = malloc(READSTR);
+	if(p == nil)
+		error(Enomem);
 	l = 0;
 	for(i = 0; i < Nrxstats; i++){
 		l += snprint(p+l, READSTR-l, "%s: %ud\n",
@@ -491,7 +493,7 @@ vt6102attach(Ether* edev)
 	alloc = malloc((ctlr->nrd+ctlr->ntd)*ctlr->cls + ctlr->ntd*Txcopy + ctlr->cls-1);
 	if(alloc == nil){
 		qunlock(&ctlr->alock);
-		return;
+		error(Enomem);
 	}
 	ctlr->alloc = alloc;
 	alloc = (uchar*)ROUNDUP((ulong)alloc, ctlr->cls);
@@ -875,6 +877,14 @@ vt6102detach(Ctlr* ctlr)
 	return 0;
 }
 
+static void
+vt6102shutdown(Ether *ether)
+{
+	Ctlr *ctlr = ether->ctlr;
+
+	vt6102detach(ctlr);
+}
+
 static int
 vt6102reset(Ctlr* ctlr)
 {
@@ -967,6 +977,10 @@ vt6102pci(void)
 			continue;
 		}
 		ctlr = malloc(sizeof(Ctlr));
+		if(ctlr == nil) {
+			iofree(port);
+			error(Enomem);
+		}
 		ctlr->port = port;
 		ctlr->pcidev = p;
 		ctlr->id = (p->did<<16)|p->vid;
@@ -1033,6 +1047,7 @@ vt6102pnp(Ether* edev)
 	edev->transmit = vt6102transmit;
 	edev->interrupt = vt6102interrupt;
 	edev->ifstat = vt6102ifstat;
+	edev->shutdown = vt6102shutdown;
 	edev->ctl = nil;
 
 	edev->arg = edev;

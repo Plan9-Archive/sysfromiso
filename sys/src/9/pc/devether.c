@@ -182,12 +182,12 @@ etheriq(Ether* ether, Block* bp, int fromwire)
 				else if(xbp = iallocb(len)){
 					memmove(xbp->wp, pkt, len);
 					xbp->wp += len;
-					if(qpass(f->in, xbp) < 0) {
+					if(qpass(f->in, xbp) < 0){
 						// print("soverflow for f->in\n");
 						ether->soverflows++;
 					}
 				}
-				else {
+				else{
 					// print("soverflow iallocb\n");
 					ether->soverflows++;
 				}
@@ -198,7 +198,7 @@ etheriq(Ether* ether, Block* bp, int fromwire)
 	}
 
 	if(fx){
-		if(qpass(fx->in, bp) < 0) {
+		if(qpass(fx->in, bp) < 0){
 			// print("soverflow for fx->in\n");
 			ether->soverflows++;
 		}
@@ -274,13 +274,13 @@ etherwrite(Chan* chan, void* buf, long n, vlong)
 			return n;
 		}
 		free(cb);
-		if(ether->ctl!=nil)
-			return ether->ctl(ether,buf,n);
+		if(ether->ctl != nil)
+			return ether->ctl(ether, buf, n);
 
 		error(Ebadctl);
 	}
 
-	if(n > ether->maxmtu)
+	if(n > ether->mtu)
 		error(Etoobig);
 	if(n < ether->minmtu)
 		error(Etoosmall);
@@ -317,7 +317,7 @@ etherbwrite(Chan* chan, Block* bp, ulong)
 	}
 	ether = etherxx[chan->dev];
 
-	if(n > ether->maxmtu){
+	if(n > ether->mtu){
 		freeb(bp);
 		error(Etoobig);
 	}
@@ -378,12 +378,15 @@ etherprobe(int cardno, int ctlrno)
 	char buf[128], name[32];
 
 	ether = malloc(sizeof(Ether));
+	if(ether == nil)
+		error(Enomem);
 	memset(ether, 0, sizeof(Ether));
 	ether->ctlrno = ctlrno;
 	ether->tbdf = BUSUNKNOWN;
 	ether->mbps = 10;
 	ether->minmtu = ETHERMINTU;
 	ether->maxmtu = ETHERMAXTU;
+	ether->mtu = ETHERMAXTU;
 
 	if(cardno < 0){
 		if(isaconfig("ether", ctlrno, ether) == 0){
@@ -428,8 +431,12 @@ etherprobe(int cardno, int ctlrno)
 	if(ether->irq >= 0)
 		intrenable(ether->irq, ether->interrupt, ether, ether->tbdf, name);
 
-	i = sprint(buf, "#l%d: %s: %dMbps port 0x%luX irq %d",
-		ctlrno, cards[cardno].type, ether->mbps, ether->port, ether->irq);
+	i = sprint(buf, "#l%d: %s: ", ctlrno, cards[cardno].type);
+	if(ether->mbps >= 1000)
+		i += sprint(buf+i, "%dGbps", ether->mbps/1000);
+	else
+		i += sprint(buf+i, "%dMbps", ether->mbps);
+	i += sprint(buf+i, " port 0x%luX irq %d", ether->port, ether->irq);
 	if(ether->mem)
 		i += sprint(buf+i, " addr 0x%luX", ether->mem);
 	if(ether->size)
@@ -508,7 +515,7 @@ ethershutdown(void)
 		if(ether == nil)
 			continue;
 		if(ether->shutdown == nil) {
-			print("#l%d: no shutdown fuction\n", i);
+			print("#l%d: no shutdown function\n", i);
 			continue;
 		}
 		(*ether->shutdown)(ether);

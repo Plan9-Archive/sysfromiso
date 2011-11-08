@@ -419,6 +419,7 @@ enum {
 	i82571,
 	i82572,
 	i82573,
+	i82574,
 	i82575,
 	i82576,
 	i82577,
@@ -431,6 +432,7 @@ static char *tname[] = {
 	"i82571",
 	"i82572",
 	"i82573",
+	"i82574",
 	"i82575",
 	"i82576",
 	"i82577",
@@ -1042,9 +1044,9 @@ i82563pci(void)
 		case 0x109a:		/*  l */
 			type = i82573;
 			break;
-//		case 0x10d3:		/* l */
-//			type = i82574;	/* never heard of it */
-//			break;
+		case 0x10d3:		/* l */
+			type = i82574;
+			break;
 		case 0x10a7:		/* 82575eb */
 			type = i82575;
 			break;
@@ -1079,11 +1081,9 @@ i82563pci(void)
 			print("%s: unexpected CLS - %d bytes\n",
 				tname[type], cls*sizeof(long));
 			break;
-		case 0x00:
+		case 0x00:			/* alphapc 164lx returns 0 */
 		case 0xFF:
-			/* alphapc 164lx returns 0 */
-			print("%s: unusable PciCLS: %d, using %d longs\n",
-				tname[type], cls, CACHELINESZ/sizeof(long));
+			/* bogus value; use a sane default */
 			cls = CACHELINESZ/sizeof(long);
 			pcicfgw8(p, PciCLS, cls);
 			break;

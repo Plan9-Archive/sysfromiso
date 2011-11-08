@@ -21,7 +21,7 @@
 #define Intel(x)	((x)->pci->vid == Vintel)
 
 enum {
-	NCtlr	= 4,
+	NCtlr	= 8,
 	NCtlrdrv= 32,
 	NDrive	= NCtlr*NCtlrdrv,
 
@@ -34,6 +34,12 @@ enum {
 	Mcomrwait= 64*1024/Nms - 1,
 
 	Obs	= 0xa0,			/* obsolete device bits */
+
+	/*
+	 * if we get more than this many interrupts per tick for a drive,
+	 * either the hardware is broken or we've got a bug in this driver.
+	 */
+	Maxintrspertick = 1000,
 };
 
 /* pci space configuration */
@@ -144,6 +150,9 @@ struct Drive {
 	int	driveno;	/* ctlr*NCtlrdrv + unit */
 	/* controller port # != driveno when not all ports are enabled */
 	int	portno;
+
+	ulong	lastintr0;
+	ulong	intrs;
 };
 
 struct Ctlr {
@@ -165,7 +174,10 @@ struct Ctlr {
 	Drive	rawdrive[NCtlrdrv];
 	Drive*	drive[NCtlrdrv];
 	int	ndrive;
-	int	mport;
+	int	mport;		/* highest drive # (0-origin) on ich9 at least */
+
+	ulong	lastintr0;
+	ulong	intrs;		/* not attributable to any drive */
 };
 
 struct Asleep {
@@ -877,10 +889,10 @@ ahciconf(Ctlr *ctlr)
 		h->ghc |= Hae;
 
 	dprint("#S/sd%c: type %s port %#p: sss %ld ncs %ld coal %ld "
-		"mports %ld led %ld clo %ld ems %ld\n",
+		"%ld ports, led %ld clo %ld ems %ld\n",
 		ctlr->sdev->idno, tname[ctlr->type], h,
-		(u>>27) & 1, (u>>8) & 0x1f, (u>>7) & 1, u & 0x1f, (u>>25) & 1,
-		(u>>24) & 1, (u>>6) & 1);
+		(u>>27) & 1, (u>>8) & 0x1f, (u>>7) & 1,
+		(u & 0x1f) + 1, (u>>25) & 1, (u>>24) & 1, (u>>6) & 1);
 	return countbits(h->pi);
 }
 
@@ -1355,6 +1367,36 @@ satakproc(void*)
 }
 
 static void
+isctlrjabbering(Ctlr *c, ulong cause)
+{
+	ulong now;
+
+	now = TK2MS(MACHP(0)->ticks);
+	if (now > c->lastintr0) {
+		c->intrs = 0;
+		c->lastintr0 = now;
+	}
+	if (++c->intrs > Maxintrspertick)
+		panic("sdiahci: too many intrs per tick for no serviced "
+			"drive; cause %#lux mport %d", cause, c->mport);
+}
+
+static void
+isdrivejabbering(Drive *d)
+{
+	ulong now;
+
+	now = TK2MS(MACHP(0)->ticks);
+	if (now > d->lastintr0) {
+		d->intrs = 0;
+		d->lastintr0 = now;
+	}
+	if (++d->intrs > Maxintrspertick)
+		panic("sdiahci: too many interrupts per tick for %s",
+			d->unit->name);
+}
+
+static void
 iainterrupt(Ureg*, void *a)
 {
 	int i;
@@ -1365,16 +1407,29 @@ iainterrupt(Ureg*, void *a)
 	c = a;
 	ilock(c);
 	cause = c->hba->isr;
-	for(i = 0; i < c->mport; i++){
+	if (cause == 0) {
+		isctlrjabbering(c, cause);
+		// iprint("sdiahci: interrupt for no drive\n");
+		iunlock(c);
+		return;
+	}
+	for(i = 0; cause && i <= c->mport; i++){
 		m = 1 << i;
 		if((cause & m) == 0)
 			continue;
 		d = c->rawdrive + i;
 		ilock(d);
+		isdrivejabbering(d);
 		if(d->port->isr && c->hba->pi & m)
 			updatedrive(d);
 		c->hba->isr = m;
 		iunlock(d);
+
+		cause &= ~m;
+	}
+	if (cause) {
+		isctlrjabbering(c, cause);
+		iprint("sdiachi: intr cause unserviced: %#lux\n", cause);
 	}
 	iunlock(c);
 }
@@ -1408,7 +1463,7 @@ iaenable(SDev *s)
 	if(!c->enabled) {
 		if(once == 0) {
 			once = 1;
-			kproc("iasata", satakproc, 0);
+			kproc("ahci", satakproc, 0);
 		}
 		if(c->ndrive == 0)
 			panic("iaenable: zero s->ctlr->ndrive");
@@ -1882,7 +1937,8 @@ didtype(Pcidev *p)
 		/*
 		 * 0x27c4 is the intel 82801 in compatibility (not sata) mode.
 		 */
-		if ((p->did & 0xfffb) == 0x27c1 ||	/* 82801g[bh]m ich7 */
+		if (p->did == 0x24d1 ||			/* 82801eb/er */
+		    (p->did & 0xfffb) == 0x27c1 ||	/* 82801g[bh]m ich7 */
 		    p->did == 0x2821 ||			/* 82801h[roh] */
 		    (p->did & 0xfffe) == 0x2824 ||	/* 82801h[b] */
 		    (p->did & 0xfeff) == 0x2829 ||	/* ich8/9m */
@@ -1893,8 +1949,10 @@ didtype(Pcidev *p)
 			return Tich;
 		break;
 	case Vatiamd:
-		if(p->did == 0x4380)
+		if(p->did == 0x4380 || p->did == 0x4390 || p->did == 0x4391){
+			print("detected sb600 vid 0x%ux did 0x%ux\n", p->vid, p->did);
 			return Tsb600;
+		}
 		break;
 	case Vmarvell:
 		/* can't cope with sata 3 yet; touching sd files will hang */
@@ -2133,6 +2191,23 @@ forcestate(Drive *d, char *state)
 	iunlock(d);
 }
 
+/*
+ * force this driver to notice a change of medium if the hardware doesn't
+ * report it.
+ */
+static void
+changemedia(SDunit *u)
+{
+	Ctlr *c;
+	Drive *d;
+
+	c = u->dev->ctlr;
+	d = c->drive[u->subno];
+	ilock(d);
+	d->mediachange = 1;
+	u->sectors = 0;
+	iunlock(d);
+}
 
 static int
 iawctl(SDunit *u, Cmdbuf *cmd)
@@ -2146,7 +2221,9 @@ iawctl(SDunit *u, Cmdbuf *cmd)
 	d = c->drive[u->subno];
 	f = cmd->f;
 
-	if(strcmp(f[0], "flushcache") == 0)
+	if(strcmp(f[0], "change") == 0)
+		changemedia(u);
+	else if(strcmp(f[0], "flushcache") == 0)
 		runflushcache(d);
 	else if(strcmp(f[0], "identify") ==  0){
 		i = strtoul(f[1]? f[1]: "0", 0, 0);

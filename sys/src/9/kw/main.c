@@ -21,6 +21,11 @@
 #define	MAXCONF		64
 #define MAXCONFLINE	160
 
+enum {
+	Maxmem	= 512*MB,			/* limited by address ranges */
+	Minmem	= 256*MB,			/* conservative default */
+};
+
 #define isascii(c) ((uchar)(c) > 0 && (uchar)(c) < 0177)
 
 uintptr kseg0 = KZERO;
@@ -221,21 +226,31 @@ dumpbytes(uchar *bp, long max)
 	iprint("...\n");
 }
 
+void	archconsole(void);
+vlong	probeaddr(uintptr);
+
 static void
 spiprobe(void)
 {
+if (0) {
+/* generates repeated "spurious irqbridge interrupt: 00000010" on sheevaplug. */
 	Spiregs *rp = (Spiregs *)soc.spi;
 
+	if (probeaddr(soc.spi) < 0)
+		return;
 	rp->ictl |= Csnact;
 	coherence();
 	rp->icfg |= Dirrdcmd | 3<<8;	/* fast reads, 4-byte addresses */
 	rp->icfg &= ~Bytelen;		/* one-byte reads */
 	coherence();
 
-//	print("spi flash at %#ux: memory reads enabled\n", PHYSSPIFLASH);
+	print("spi flash ignored: ctlr %#p, data %#ux", rp, PHYSSPIFLASH);
+	mmuidmap(PHYSSPIFLASH, 1);
+	if (probeaddr(PHYSSPIFLASH) < 0)
+		print(" (no response)");
+	print(": memory reads enabled\n");
 }
-
-void	archconsole(void);
+}
 
 /*
  * entered from l.s with mmu enabled.
@@ -275,6 +290,7 @@ wave(' ');
 	/* want plan9.ini to be able to affect memory sizing in confinit */
 	plan9iniinit();		/* before we step on plan9.ini in low memory */
 
+	/* set memsize before xinit */
 	confinit();
 	/* xinit would print if it could */
 	xinit();
@@ -313,6 +329,7 @@ wave(' ');
 	initseg();
 	links();
 	chandevreset();			/* most devices are discovered here */
+	spiprobe();
 
 	pageinit();
 	swapinit();
@@ -591,13 +608,28 @@ userinit(void)
 
 Conf conf;			/* XXX - must go - gag */
 
-Confmem sheevamem[] = {
+Confmem sheevamem[nelem(conf.mem)] = {
 	/*
 	 * Memory available to Plan 9:
 	 * the 8K is reserved for ethernet dma access violations to scribble on.
 	 */
-	{ .base = 0, .limit = 512*MB - 8*1024, },
+	{ .base = PHYSDRAM, .limit = PHYSDRAM + Maxmem - 8*1024, },
 };
+ulong memsize = Maxmem;
+
+static int
+gotmem(uintptr sz)
+{
+	uintptr addr;
+
+	addr = PHYSDRAM + sz - MB;
+	mmuidmap(addr, 1);
+	if (probeaddr(addr) >= 0) {
+		memsize = sz;
+		return 0;
+	}
+	return -1;
+}
 
 void
 confinit(void)
@@ -605,6 +637,7 @@ confinit(void)
 	int i;
 	ulong kpages;
 	uintptr pa;
+	char *p;
 
 	/*
 	 * Copy the physical memory configuration to Conf.mem.
@@ -613,6 +646,22 @@ confinit(void)
 		iprint("memory configuration botch\n");
 		exit(1);
 	}
+	if((p = getconf("*maxmem")) != nil) {
+		memsize = strtoul(p, 0, 0) - PHYSDRAM;
+		if (memsize < 16*MB)		/* sanity */
+			memsize = 16*MB;
+	}
+
+	/*
+	 * see if all that memory exists; if not, find out how much does.
+	 * trapinit must have been called first.
+	 */
+	if (gotmem(memsize) < 0 && gotmem(256*MB) < 0 && gotmem(128*MB) < 0) {
+		iprint("can't find any memory, assuming %dMB\n", Minmem / MB);
+		memsize = Minmem;
+	}
+
+	sheevamem[0].limit = PHYSDRAM + memsize - 8*1024;
 	memmove(conf.mem, sheevamem, sizeof(sheevamem));
 
 	conf.npage = 0;
