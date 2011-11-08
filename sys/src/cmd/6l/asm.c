@@ -2,7 +2,7 @@
 
 #define	Dbufslop	100
 
-#define PADDR(a)	((ulong)(a) & ~0x80000000)
+#define PADDR(a)	((a) & ~0xfffffffff0000000ull)
 
 vlong
 entryvalue(void)
@@ -230,7 +230,10 @@ asmb(void)
 		cput(1);			/* version = CURRENT */
 		strnput("", 9);
 		wputl(2);			/* type = EXEC */
-		wputl(62);			/* machine = AMD64 */
+		if(debug['8'])
+			wputl(3);		/* machine = 386 */
+		else
+			wputl(62);		/* machine = AMD64 */
 		lputl(1L);			/* version = CURRENT */
 		lputl(PADDR(entryvalue()));	/* entry vaddr */
 		lputl(52L);			/* offset to first phdr */

@@ -13,7 +13,7 @@ char	*thestring 	= "amd64";
 char	*paramspace	= "FP";
 
 /*
- *	-H2 -T4136 -R4096		is plan9 64-bit format
+ *	-H2 -T0x200028 -R0x200000	is plan9 format (was -T4136 -R4096)
  *	-H3 -T4128 -R4096		is plan9 32-bit format
  *	-H5 -T0x80110000 -R4096		is ELF32
  *
@@ -125,16 +125,16 @@ main(int argc, char *argv[])
 	case 2:	/* plan 9 */
 		HEADR = 32L+8L;
 		if(INITTEXT == -1)
-			INITTEXT = 4096+HEADR;
+			INITTEXT = 0x200000+HEADR;
 		if(INITDAT == -1)
 			INITDAT = 0;
 		if(INITRND == -1)
-			INITRND = 4096;
+			INITRND = 0x200000;
 		break;
 	case 3:	/* plan 9 */
 		HEADR = 32L;
 		if(INITTEXT == -1)
-			INITTEXT = 4096+32;
+			INITTEXT = 4096+HEADR;
 		if(INITDAT == -1)
 			INITDAT = 0;
 		if(INITRND == -1)
@@ -143,7 +143,7 @@ main(int argc, char *argv[])
 	case 5:	/* elf32 executable */
 		HEADR = rnd(52L+3*32L, 16);
 		if(INITTEXT == -1)
-			INITTEXT = 0x80110000L;
+			INITTEXT = 0xf0110000L;
 		if(INITDAT == -1)
 			INITDAT = 0;
 		if(INITRND == -1)
@@ -1288,16 +1288,24 @@ void
 doprof2(void)
 {
 	Sym *s2, *s4;
-	Prog *p, *q, *ps2, *ps4;
+	Prog *p, *q, *q2, *ps2, *ps4;
 
 	if(debug['v'])
 		Bprint(&bso, "%5.2f profile 2\n", cputime());
 	Bflush(&bso);
 
-	s2 = lookup("_profin", 0);
-	s4 = lookup("_profout", 0);
+	if(debug['e']){
+		s2 = lookup("_tracein", 0);
+		s4 = lookup("_traceout", 0);
+	}else{
+		s2 = lookup("_profin", 0);
+		s4 = lookup("_profout", 0);
+	}
 	if(s2->type != STEXT || s4->type != STEXT) {
-		diag("_profin/_profout not defined");
+		if(debug['e'])
+			diag("_tracein/_traceout not defined %d %d", s2->type, s4->type);
+		else
+			diag("_profin/_profout not defined");
 		return;
 	}
 
@@ -1338,7 +1346,20 @@ doprof2(void)
 			q->line = p->line;
 			q->pc = p->pc;
 			q->link = p->link;
-			p->link = q;
+			if(debug['e']){		/* embedded tracing */
+				q2 = prg();
+				p->link = q2;
+				q2->link = q;
+
+				q2->line = p->line;
+				q2->pc = p->pc;
+
+				q2->as = AJMP;
+				q2->to.type = D_BRANCH;
+				q2->to.sym = p->to.sym;
+				q2->pcond = q->link;
+			}else
+				p->link = q;
 			p = q;
 			p->as = ACALL;
 			p->to.type = D_BRANCH;
@@ -1348,6 +1369,17 @@ doprof2(void)
 			continue;
 		}
 		if(p->as == ARET) {
+			/*
+			 * RET (default)
+			 */
+			if(debug['e']){		/* embedded tracing */
+				q = prg();
+				q->line = p->line;
+				q->pc = p->pc;
+				q->link = p->link;
+				p->link = q;
+				p = q;
+			}
 			/*
 			 * RET
 			 */

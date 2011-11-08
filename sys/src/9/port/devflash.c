@@ -71,7 +71,8 @@ flash2gen(Chan *c, ulong p, Dir *dp)
 		return 1;
 	case Qctl:
 		snprint(up->genbuf, sizeof(up->genbuf), "%sctl", fp->name);
-		devdir(c, q, up->genbuf, 0, eve, 0660, dp);
+		/* no harm in letting everybody read the ctl files */
+		devdir(c, q, up->genbuf, 0, eve, 0664, dp);
 		return 1;
 	default:
 		return -1;
@@ -241,6 +242,8 @@ flashread(Chan *c, void *buf, long n, vlong offset)
 		return n;
 	case Qctl:
 		s = malloc(READSTR);
+		if(s == nil)
+			error(Enomem);
 		if(waserror()){
 			free(s);
 			nexterror();
@@ -476,6 +479,8 @@ addflashcard(char *name, int (*reset)(Flash*))
 	Flashtype *f, **l;
 
 	f = (Flashtype*)malloc(sizeof(*f));
+	if(f == nil)
+		error(Enomem);
 	f->name = name;
 	f->reset = reset;
 	f->next = nil;

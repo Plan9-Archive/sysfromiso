@@ -16,7 +16,7 @@ fossil, flchk, flfmt \- archival file server
 ]
 [
 .B -m
-.I free-memory%
+.I free-memory-percent
 ]
 .PP
 .B fossil/flchk
@@ -210,6 +210,8 @@ documented in
 .IR fossilcons (8).
 .PP
 The options are:
+.TF "-c\fI cmd
+.PD
 .TP
 .B -D
 Toggle the debugging flag, which is initially off.
@@ -230,7 +232,7 @@ This option may be repeated to give multiple
 commands.
 Typically the only commands given on the
 command line are
-.RB `` . \fIfile \fR,''
+.RB `` ".\fI file" ,''
 which executes a file containing commands,
 and
 .RB `` "srv -p" \fIcons \fR,''
@@ -249,7 +251,7 @@ reads and writes the command set stored in the disk.
 .TP
 .B -m
 Allocate
-.I free-memory%
+.I free-memory-percent
 percent of the available free RAM for buffers.
 This overrides all other memory sizing parameters,
 notably the
@@ -299,6 +301,8 @@ blocks and any inconsistencies involving the active file system
 should be taken with a grain of salt.
 .PP
 The options are:
+.TF "-h\fI host
+.PD
 .TP
 .B -f
 Fast mode.
@@ -335,6 +339,8 @@ and
 .BR snapshot ,
 as described above.
 The options are:
+.TF "-b\fI blocksize
+.PD
 .TP
 .B -y
 Yes mode.
@@ -425,7 +431,7 @@ checking turned off, create a users file, and mount the server:
 .EX
 fossil/flfmt /dev/sdC0/fossil
 fossil/conf -w /dev/sdC0/fossil <<EOF
-fsys main config /dev/sdC0/fossil
+fsys main config
 fsys main open -AWP
 fsys main
 create /active/adm adm sys d775
@@ -486,6 +492,7 @@ command to prepare the script.
 .IR fs (4),
 .IR srv (4),
 .IR fossilcons (8),
+.IR loadfossil (8),
 .IR venti (8)
 .SH BUGS
 It is possible that the disk format (but not the Venti format)

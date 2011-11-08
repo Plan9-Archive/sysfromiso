@@ -227,7 +227,7 @@ umsrequest(Umsc *umsc, ScsiPtr *cmd, ScsiPtr *data, int *status)
 	cbw.flags = data->write? CbwDataOut: CbwDataIn;
 	cbw.lun = umsc->lun;
 	if(cmd->count < 1 || cmd->count > 16)
-		print("disk: umsrequest: bad cmd count: %ld\n", cmd->count);
+		fprint(2, "disk: umsrequest: bad cmd count: %ld\n", cmd->count);
 
 	cbw.len = cmd->count;
 	assert(cmd->count <= sizeof(cbw.command));
@@ -454,7 +454,10 @@ setup(Umsc *lun, char *data, int count, vlong offset)
 /*
  * Upon SRread/SRwrite errors we assume the medium may have changed,
  * and ask again for the capacity of the media.
- * BUG: How to proceed to avoid confussing dossrv??
+ * BUG: How to proceed to avoid confusing dossrv??
+ *
+ * ctl reads must match the format documented in sd(3) exactly
+ * to interoperate with the rest of the system.
  */
 static long
 dread(Usbfs *fs, Fid *fid, void *data, long count, vlong offset)
@@ -478,14 +481,21 @@ dread(Usbfs *fs, Fid *fid, void *data, long count, vlong offset)
 		count = usbdirread(fs, q, data, count, offset, dirgen, nil);
 		break;
 	case Qctl:
+		/*
+		 * Some usb disks need an extra opportunity to divulge their
+		 * capacity (e.g. M-Systems/SanDisk 1GB flash drive).
+		 */
+		if(lun->lbsize <= 0)
+			umscapacity(lun);
+
+		s = buf;
 		e = buf + sizeof(buf);
-		s = seprint(buf, e, "%s lun %ld: ", fs->dev->dir, lun - &ums->lun[0]);
 		if(lun->flags & Finqok)
-			s = seprint(s, e, "inquiry %s ", lun->inq);
+			s = seprint(s, e, "inquiry %s lun %ld: %s\n",
+				fs->dev->dir, lun - &ums->lun[0], lun->inq);
 		if(lun->blocks > 0)
-			s = seprint(s, e, "geometry %llud %ld",
+			s = seprint(s, e, "geometry %llud %ld\n",
 				lun->blocks, lun->lbsize);
-		s = seprint(s, e, "\n");
 		count = usbreadbuf(data, count, offset, buf, s - buf);
 		break;
 	case Qraw:

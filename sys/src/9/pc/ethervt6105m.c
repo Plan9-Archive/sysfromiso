@@ -442,6 +442,8 @@ vt6105Mifstat(Ether* edev, void* a, long n, ulong offset)
 
 	alloc = malloc(READSTR);
 	p = alloc;
+	if(p == nil)
+		error(Enomem);
 	e = p + READSTR;
 	for(i = 0; i < Nrxstats; i++){
 		p = seprint(p, e, "%s: %ud\n", rxstats[i], ctlr->rxstats[i]);
@@ -635,7 +637,7 @@ vt6105Mattach(Ether* edev)
 	alloc = mallocalign((ctlr->nrd+ctlr->ntd)*dsz, dsz, 0, 0);
 	if(alloc == nil){
 		qunlock(&ctlr->alock);
-		return;
+		error(Enomem);
 	}
 	ctlr->alloc = alloc;
 
@@ -1038,6 +1040,14 @@ vt6105Mdetach(Ctlr* ctlr)
 	return 0;
 }
 
+static void
+vt6105Mshutdown(Ether *ether)
+{
+	Ctlr *ctlr = ether->ctlr;
+
+	vt6105Mdetach(ctlr);
+}
+
 static int
 vt6105Mreset(Ctlr* ctlr)
 {
@@ -1132,6 +1142,10 @@ vt6105Mpci(void)
 			continue;
 		}
 		ctlr = malloc(sizeof(Ctlr));
+		if(ctlr == nil) {
+			iofree(port);
+			error(Enomem);
+		}
 		ctlr->port = port;
 		ctlr->pcidev = p;
 		ctlr->id = (p->did<<16)|p->vid;
@@ -1202,6 +1216,7 @@ vt6105Mpnp(Ether* edev)
 	edev->transmit = vt6105Mtransmit;
 	edev->interrupt = vt6105Minterrupt;
 	edev->ifstat = vt6105Mifstat;
+	edev->shutdown = vt6105Mshutdown;
 	edev->ctl = nil;
 
 	edev->arg = edev;

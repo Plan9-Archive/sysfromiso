@@ -646,10 +646,11 @@ ahciconf(Ctlr *c)
 	if((u & Hsam) == 0)
 		h->ghc |= Hae;
 
-	print("ahci%d port %#p: hba sss %ld; ncs %ld; coal %ld; mports %ld; "
-		"led %ld; clo %ld; ems %ld;\n", count++, h,
-		(u>>27) & 1, (u>>8) & 0x1f, (u>>7) & 1,	u & 0x1f, (u>>25) & 1,
-		(u>>24) & 1, (u>>6) & 1);
+	print("ahci%d port %#p: hba sss %ld; ncs %ld; coal %ld; %ld ports; "
+		"led %ld; clo %ld; ems %ld\n", count++, h,
+		(u>>27) & 1, (u>>8) & 0x1f, (u>>7) & 1,
+		(u & 0x1f) + 1,
+		(u>>25) & 1, (u>>24) & 1, (u>>6) & 1);
 	return countbits(h->pi);
 }
 
@@ -1103,7 +1104,7 @@ iainterrupt(Ureg*, void *a)
 	c = a;
 	ilock(c);
 	cause = c->hba->isr;
-	for(i = 0; i < c->mport; i++){
+	for(i = 0; i <= c->mport; i++){
 		m = 1 << i;
 		if((cause & m) == 0)
 			continue;
@@ -1605,7 +1606,8 @@ didtype(Pcidev *p)
 		/*
 		 * 0x27c4 is the intel 82801 in compatibility (not sata) mode.
 		 */
-		if ((p->did & 0xfffb) == 0x27c1 ||	/* 82801g[bh]m ich7 */
+		if (p->did == 0x24d1 ||			/* 82801eb/er */
+		    (p->did & 0xfffb) == 0x27c1 ||	/* 82801g[bh]m ich7 */
 		    p->did == 0x2821 ||			/* 82801h[roh] */
 		    (p->did & 0xfffe) == 0x2824 ||	/* 82801h[b] */
 		    (p->did & 0xfeff) == 0x2829 ||	/* ich8/9m */

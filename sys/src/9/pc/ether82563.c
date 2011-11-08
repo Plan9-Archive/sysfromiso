@@ -1,6 +1,6 @@
 /*
  * Intel Gigabit Ethernet PCI-Express Controllers.
- *	8256[36], 8257[12], 82573[ev]
+ *	8256[36], 8257[124], 82573[ev]
  *	82575eb, 82576, 82577
  * Pretty basic, does not use many of the chip smarts.
  * The interrupt mitigation tuning for each chip variant
@@ -423,6 +423,7 @@ enum {
 	i82571,
 	i82572,
 	i82573,
+	i82574,
 	i82575,
 	i82576,
 	i82577,
@@ -439,6 +440,7 @@ static int rbtab[] = {
 	1514,
 	1514,
 	1514,
+	1514,
 };
 
 static char *tname[] = {
@@ -449,6 +451,7 @@ static char *tname[] = {
 	"i82571",
 	"i82572",
 	"i82573",
+	"i82574",
 	"i82575",
 	"i82576",
 	"i82577",
@@ -614,6 +617,10 @@ i82563ifstat(Ether* edev, void* a, long n, ulong offset)
 	ctlr = edev->ctlr;
 	qlock(&ctlr->slock);
 	p = s = malloc(READSTR);
+	if(p == nil) {
+		qunlock(&ctlr->slock);
+		error(Enomem);
+	}
 	e = p + READSTR;
 
 	for(i = 0; i < Nstatistics; i++){
@@ -1280,7 +1287,7 @@ i82563attach(Ether* edev)
 
 	for(ctlr->nrb = 0; ctlr->nrb < Nrb; ctlr->nrb++){
 		if((bp = allocb(ctlr->rbsz + BY2PG)) == nil)
-			break;
+			error(Enomem);
 		bp->free = i82563rbfree;
 		freeb(bp);
 	}
@@ -1307,7 +1314,7 @@ i82563interrupt(Ureg*, void* arg)
 {
 	Ctlr *ctlr;
 	Ether *edev;
-	int icr, im;
+	int icr, im, i;
 
 	edev = arg;
 	ctlr = edev->ctlr;
@@ -1315,8 +1322,9 @@ i82563interrupt(Ureg*, void* arg)
 	ilock(&ctlr->imlock);
 	csr32w(ctlr, Imc, ~0);
 	im = ctlr->im;
-
-	for(icr = csr32r(ctlr, Icr); icr & ctlr->im; icr = csr32r(ctlr, Icr)){
+	i = 1000;			/* don't livelock */
+	for(icr = csr32r(ctlr, Icr); icr & ctlr->im && i-- > 0;
+	    icr = csr32r(ctlr, Icr)){
 		if(icr & Lsc){
 			im &= ~Lsc;
 			ctlr->lim = icr & Lsc;
@@ -1335,7 +1343,6 @@ i82563interrupt(Ureg*, void* arg)
 			wakeup(&ctlr->trendez);
 		}
 	}
-
 	ctlr->im = im;
 	csr32w(ctlr, Ims, im);
 	iunlock(&ctlr->imlock);
@@ -1627,9 +1634,9 @@ i82563pci(void)
 		case 0x109a:		/*  l */
 			type = i82573;
 			break;
-//		case 0x10d3:		/* l */
-//			type = i82574;	/* never heard of it */
-//			break;
+		case 0x10d3:		/* l */
+			type = i82574;
+			break;
 		case 0x10a7:	/* 82575eb: one of a pair of controllers */
 			type = i82575;
 			break;
@@ -1650,6 +1657,10 @@ i82563pci(void)
 			continue;
 		}
 		ctlr = malloc(sizeof(Ctlr));
+		if(ctlr == nil) {
+			vunmap(mem, p->mem[0].size);
+			error(Enomem);
+		}
 		ctlr->port = io;
 		ctlr->pcidev = p;
 		ctlr->type = type;

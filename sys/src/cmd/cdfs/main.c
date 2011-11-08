@@ -192,7 +192,7 @@ fsremove(Req *r)
 	case Qwd:
 		if(drive->fixate(drive) < 0)
 			respond(r, geterrstr());
-// let us see if it can figure this out:	drive->writeok = 0;	
+// let us see if it can figure this out:	drive->writeok = No;	
 		else
 			respond(r, nil);
 		checktoc(drive);
@@ -204,7 +204,7 @@ fsremove(Req *r)
 }
 
 /* result is one word, so it can be used as a uid in Dir structs */
-static char *
+char *
 disctype(Drive *drive)
 {
 	char *type, *rw;
@@ -229,9 +229,9 @@ disctype(Drive *drive)
 	}
 	rw = "";
 	if (drive->mmctype != Mmcnone && drive->dvdtype == nil)
-		if (drive->erasable)
+		if (drive->erasable == Yes)
 			rw = drive->mmctype == Mmcbd? "re": "rw";
-		else if (drive->recordable)
+		else if (drive->recordable == Yes)
 			rw = "r";
 		else
 			rw = "rom";
@@ -271,7 +271,7 @@ fillstat(ulong qid, Dir *d)
 		break;
 
 	case Qwa:
-		if(drive->writeok == 0 ||
+		if(drive->writeok == No ||
 		    drive->mmctype != Mmcnone &&
 		    drive->mmctype != Mmccd)
 			return 0;
@@ -281,7 +281,7 @@ fillstat(ulong qid, Dir *d)
 		break;
 
 	case Qwd:
-		if(drive->writeok == 0)
+		if(drive->writeok == No)
 			return 0;
 		d->name = "wd";
 		d->qid.type = QTDIR;
@@ -718,6 +718,7 @@ main(int argc, char **argv)
 	if(dev == nil || mtpt == nil || argc > 0)
 		usage();
 
+	werrstr("");
 	if((s = openscsi(dev)) == nil)
 		sysfatal("openscsi '%s': %r", dev);
 	if((drive = mmcprobe(s)) == nil)

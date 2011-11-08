@@ -51,10 +51,10 @@ static char *
 ventihost(char *host)
 {
 	if(host != nil)
-		return strdup(host);
+		return vtStrDup(host);
 	host = getenv("venti");
 	if(host == nil)
-		host = strdup("$venti");
+		host = vtStrDup("$venti");
 	return host;
 }
 
@@ -1543,12 +1543,12 @@ fsysOpen(char* name, int argc, char* argv[])
 {
 	char *p, *host;
 	Fsys *fsys;
-	int noauth, noventi, noperm, rflag, wstatallow;
+	int noauth, noventi, noperm, rflag, wstatallow, noatimeupd;
 	long ncache;
 	char *usage = "usage: fsys name open [-APVWr] [-c ncache]";
 
 	ncache = 1000;
-	noauth = noperm = wstatallow = noventi = 0;
+	noauth = noperm = wstatallow = noventi = noatimeupd = 0;
 	rflag = OReadWrite;
 
 	ARGBEGIN{
@@ -1565,6 +1565,9 @@ fsysOpen(char* name, int argc, char* argv[])
 		break;
 	case 'W':
 		wstatallow = 1;
+		break;
+	case 'a':
+		noatimeupd = 1;
 		break;
 	case 'c':
 		p = ARGF();
@@ -1625,6 +1628,7 @@ fsysOpen(char* name, int argc, char* argv[])
 	fsys->noauth = noauth;
 	fsys->noperm = noperm;
 	fsys->wstatallow = wstatallow;
+	fsys->fs->noatimeupd = noatimeupd;
 	vtUnlock(fsys->lock);
 	fsysPut(fsys);
 
@@ -1686,16 +1690,22 @@ static int
 fsysConfig(char* name, int argc, char* argv[])
 {
 	Fsys *fsys;
-	char *usage = "usage: fsys name config dev";
+	char *part;
+	char *usage = "usage: fsys name config [dev]";
 
 	ARGBEGIN{
 	default:
 		return cliError(usage);
 	}ARGEND
-	if(argc != 1)
+	if(argc > 1)
 		return cliError(usage);
 
-	if((fsys = _fsysGet(argv[0])) != nil){
+	if(argc == 0)
+		part = foptname;
+	else
+		part = argv[0];
+
+	if((fsys = _fsysGet(part)) != nil){
 		vtLock(fsys->lock);
 		if(fsys->fs != nil){
 			vtSetError(EFsysBusy, fsys->name);
@@ -1704,14 +1714,13 @@ fsysConfig(char* name, int argc, char* argv[])
 			return 0;
 		}
 		vtMemFree(fsys->dev);
-		fsys->dev = vtStrDup(argv[0]);
+		fsys->dev = vtStrDup(part);
 		vtUnlock(fsys->lock);
 	}
-	else if((fsys = fsysAlloc(name, argv[0])) == nil)
+	else if((fsys = fsysAlloc(name, part)) == nil)
 		return 0;
 
 	fsysPut(fsys);
-
 	return 1;
 }
 
